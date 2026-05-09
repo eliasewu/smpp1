@@ -1,0 +1,435 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== USERS ====================
+model User {
+  id              String    @id @default(uuid())
+  name            String
+  email           String    @unique
+  password        String
+  role            UserRole  @default(USER)
+  status          Status    @default(ACTIVE)
+  twoFactorSecret String?
+  lastLogin       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  clients    Client[]
+  campaigns  Campaign[]
+  auditLogs  AuditLog[]
+
+  @@map("users")
+}
+
+enum UserRole { ADMIN OPERATOR AGENT USER }
+enum Status { ACTIVE INACTIVE SUSPENDED }
+
+// ==================== CLIENTS ====================
+model Client {
+  id          String      @id @default(uuid())
+  name        String
+  email       String?
+  company     String?
+  phone       String?
+  type        ConnType    @default(SMPP)
+  username    String      @unique
+  password    String
+  ip          String      @default("0.0.0.0")
+  port        Int         @default(2775)
+  tps         Int         @default(100)
+  status      Status      @default(ACTIVE)
+  balance     Decimal     @default(0) @db.Decimal(12, 4)
+  creditLimit Decimal     @default(0) @db.Decimal(12, 4)
+  currency    String      @default("USD")
+  timezone    String      @default("UTC")
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  userId      String?
+
+  // SMPP Bind Status
+  bindStatus     String   @default("UNBOUND")
+  bindError      String?
+  lastBindTime   DateTime?
+  lastUnbindTime DateTime?
+
+  // Kannel Integration
+  kannelMode     String?   // "server" | "client" | null
+  kannelConfigId String?
+
+  // Billing Charge Rules
+  chargeOnSend     Boolean @default(false)
+  chargeOnSubmit   Boolean @default(true)
+  chargeOnDeliver  Boolean @default(false)
+  forceDlr         Boolean @default(false)
+  forceDlrTimeout  Int     @default(0)
+  autoInvoice      Boolean @default(false)
+  invoiceCycle     String  @default("MONTHLY")
+
+  user        User?       @relation(fields: [userId], references: [id])
+  rates       Rate[]
+  routes      Route[]
+  campaigns   Campaign[]
+  invoices    Invoice[]
+  messageLogs MessageLog[]
+  billingTxns BillingTransaction[]
+
+  @@map("clients")
+}
+
+enum ConnType { SMPP HTTP }
+
+// ==================== SUPPLIERS ====================
+model Supplier {
+  id          String       @id @default(uuid())
+  name        String
+  type        SupplierType @default(SMPP)
+  smppUser    String?
+  smppPass    String?
+  host        String?
+  port        Int?
+  tps         Int          @default(100)
+  status      Status       @default(ACTIVE)
+  macId       String?
+  qrCode      String?
+  sentToday   Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // SMPP Bind Status
+  bindStatus     String   @default("UNBOUND")
+  bindError      String?
+  lastBindTime   DateTime?
+  lastUnbindTime DateTime?
+
+  // Kannel Integration
+  kannelMode     String?   // "server" | "client" | null  
+  kannelConfigId String?
+
+  // Billing
+  chargeOnSend     Boolean @default(false)
+  chargeOnSubmit   Boolean @default(true)
+  chargeOnDeliver  Boolean @default(false)
+  sendDlrFlag      Boolean @default(true)
+  forceDlr         Boolean @default(false)
+  forceDlrTimeout  Int     @default(0)
+
+  rates       Rate[]
+  routes      Route[]
+  messageLogs MessageLog[]
+
+  @@map("suppliers")
+}
+
+enum SupplierType { SMPP HTTP DEVICE PAIR KANNEL }
+
+// ==================== RATES ====================
+model Rate {
+  id          String     @id @default(uuid())
+  country     String
+  countryCode String
+  operator    String
+  mcc         String
+  mnc         String
+  buyRate     Decimal    @db.Decimal(10, 6)
+  sellRate    Decimal    @db.Decimal(10, 6)
+  currency    String     @default("USD")
+  entityType  EntityType
+  activeFrom  DateTime   @default(now())
+  status      Status     @default(ACTIVE)
+  sortOrder   Int        @default(0)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  clientId    String?
+  supplierId  String?
+  client      Client?    @relation(fields: [clientId], references: [id])
+  supplier    Supplier?  @relation(fields: [supplierId], references: [id])
+
+  @@map("rates")
+}
+
+enum EntityType { CLIENT SUPPLIER }
+
+// ==================== ROUTES ====================
+model Route {
+  id           String    @id @default(uuid())
+  name         String
+  destinations Json
+  routeType    RouteType @default(OTP)
+  priority     Int       @default(1)
+  status       Status    @default(ACTIVE)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  clientId     String
+  supplierId   String
+  client       Client    @relation(fields: [clientId], references: [id])
+  supplier     Supplier  @relation(fields: [supplierId], references: [id])
+
+  campaigns    Campaign[]
+  messageLogs  MessageLog[]
+
+  @@map("routes")
+}
+
+enum RouteType { OTP MARKETING VOICEOTP GAMBLING TRANSACTIONAL }
+
+// ==================== KANNEL CONFIG ====================
+model KannelConfig {
+  id             String     @id @default(uuid())
+  name           String
+  mode           KannelMode
+  component      KannelComponent @default(SMPPBOX)
+  protocol       ConnType   @default(SMPP)
+  host           String
+  port           Int
+  username       String
+  password       String
+  systemType     String?
+  tps            Int        @default(100)
+  status         Status     @default(ACTIVE)
+  bindStatus     String     @default("UNBOUND")
+  bindError      String?
+  lastBindTime   DateTime?
+
+  // Kannel bearerbox config
+  bearerboxHost  String?
+  bearerboxPort  Int?
+
+  // SQLBox config
+  sqlboxDbHost   String?
+  sqlboxDbPort   Int?
+  sqlboxDbName   String?
+  sqlboxDbUser   String?
+  sqlboxDbPass   String?
+
+  // Generated kannel.conf content
+  kannelConf     String?    @db.Text
+
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@map("kannel_configs")
+}
+
+enum KannelMode { CLIENT SERVER }
+enum KannelComponent { BEARERBOX SMSBOX SMPPBOX SQLBOX }
+
+// ==================== MESSAGE LOGS ====================
+model MessageLog {
+  id              String        @id @default(uuid())
+  sender          String
+  recipient       String
+  content         String        @db.Text
+  channel         String        @default("SMPP")
+  status          MessageStatus @default(SUBMITTED)
+  dlrStatus       String?
+  reason          String?
+  cost            Decimal       @default(0) @db.Decimal(10, 6)
+  pay             Decimal       @default(0) @db.Decimal(10, 6)
+  profit          Decimal       @default(0) @db.Decimal(10, 6)
+  chargeRule      String        @default("SUBMIT")
+  clientCharged   Boolean       @default(false)
+  supplierCharged Boolean       @default(false)
+  messageId       String?
+  externalId      String?
+  parts           Int           @default(1)
+  encoding        String        @default("GSM7")
+  submitTime      DateTime?
+  deliverTime     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  clientId        String?
+  supplierId      String?
+  routeId         String?
+  kannelConfigId  String?
+  client          Client?       @relation(fields: [clientId], references: [id])
+  supplier        Supplier?     @relation(fields: [supplierId], references: [id])
+  route           Route?        @relation(fields: [routeId], references: [id])
+
+  @@index([createdAt])
+  @@index([clientId])
+  @@index([status])
+  @@map("message_logs")
+}
+
+enum MessageStatus { PENDING SUBMITTED DELIVERED FAILED EXPIRED REJECTED UNDELIVERED }
+
+// ==================== BILLING TRANSACTIONS ====================
+model BillingTransaction {
+  id          String          @id @default(uuid())
+  type        TransactionType
+  amount      Decimal         @db.Decimal(12, 4)
+  balance     Decimal         @db.Decimal(12, 4)
+  description String
+  reference   String?
+  createdAt   DateTime        @default(now())
+
+  clientId    String
+  client      Client          @relation(fields: [clientId], references: [id])
+
+  @@map("billing_transactions")
+}
+
+enum TransactionType { CREDIT DEBIT INVOICE REFUND ADJUSTMENT }
+
+// ==================== INVOICES ====================
+model Invoice {
+  id            String        @id @default(uuid())
+  number        String        @unique
+  period        String
+  totalMessages Int           @default(0)
+  amount        Decimal       @default(0) @db.Decimal(12, 4)
+  tax           Decimal       @default(0) @db.Decimal(12, 4)
+  total         Decimal       @default(0) @db.Decimal(12, 4)
+  currency      String        @default("USD")
+  status        InvoiceStatus @default(PENDING)
+  dueDate       DateTime
+  paidDate      DateTime?
+  notes         String?       @db.Text
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  clientId      String
+  client        Client        @relation(fields: [clientId], references: [id])
+
+  @@map("invoices")
+}
+
+enum InvoiceStatus { PENDING PAID OVERDUE CANCELLED }
+
+// ==================== CAMPAIGNS ====================
+model Campaign {
+  id          String         @id @default(uuid())
+  name        String
+  sender      String
+  content     String         @db.Text
+  status      CampaignStatus @default(DRAFT)
+  totalSent   Int            @default(0)
+  totalFailed Int            @default(0)
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  clientId    String?
+  routeId     String?
+  userId      String?
+  client      Client?        @relation(fields: [clientId], references: [id])
+  route       Route?         @relation(fields: [routeId], references: [id])
+  user        User?          @relation(fields: [userId], references: [id])
+
+  @@map("campaigns")
+}
+
+enum CampaignStatus { DRAFT RUNNING PAUSED COMPLETED FAILED }
+
+// ==================== TRANSLATION RULES ====================
+model TranslationRule {
+  id          String          @id @default(uuid())
+  name        String
+  type        TranslationType
+  pattern     String
+  replacement String?
+  digitLength Int?
+  prefix      String?
+  status      Status          @default(ACTIVE)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@map("translation_rules")
+}
+
+enum TranslationType { CONTENT_REPLACE OTP_EXTRACT SID_REPLACE NUMBER_MODIFY PREFIX_ADD PREFIX_REMOVE }
+
+// ==================== SMTP CONFIG ====================
+model SmtpConfig {
+  id           String   @id @default(uuid())
+  host         String   @default("")
+  port         Int      @default(587)
+  username     String   @default("")
+  password     String   @default("")
+  fromEmail    String   @default("")
+  fromName     String   @default("SMPP Gateway")
+  tls          Boolean  @default(true)
+  notifyTypes  Json     @default("[]")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("smtp_configs")
+}
+
+// ==================== COMPANY SETTINGS ====================
+model CompanySettings {
+  id          String   @id @default(uuid())
+  name        String   @default("SMPP Gateway Manager")
+  logo        String?
+  address     String?
+  city        String?
+  country     String?
+  phone       String?
+  email       String?
+  website     String?
+  vatNumber   String?
+  taxRate     Decimal  @default(5) @db.Decimal(5, 2)
+  currency    String   @default("USD")
+  timezone    String   @default("UTC")
+  invoicePrefix String @default("INV")
+  paymentTerms Int     @default(30)
+  bankDetails Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("company_settings")
+}
+
+// ==================== AUDIT LOGS ====================
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  entity    String
+  entityId  String?
+  before    Json?
+  after     Json?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
+
+// ==================== COUNTRIES ====================
+model Country {
+  id        String     @id @default(uuid())
+  name      String
+  code      String     @unique
+  mcc       String
+  createdAt DateTime   @default(now())
+
+  operators Operator[]
+
+  @@map("countries")
+}
+
+model Operator {
+  id        String   @id @default(uuid())
+  name      String
+  mnc       String
+  createdAt DateTime @default(now())
+
+  countryId String
+  country   Country  @relation(fields: [countryId], references: [id])
+
+  @@map("operators")
+}
