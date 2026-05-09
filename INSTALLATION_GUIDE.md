@@ -58,7 +58,7 @@
 
 ```bash
 # Option 1: From GitHub
-curl -fsSL https://raw.githubusercontent.com/smpp1/main/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/eliasewu/smpp1/main/install.sh | sudo bash
 
 # Option 2: Local file
 sudo bash scripts/install.sh
